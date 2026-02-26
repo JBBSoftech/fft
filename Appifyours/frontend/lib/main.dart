@@ -4,24 +4,19 @@ import 'dart:async';
 import 'package:http/http.dart' as http;
 import 'package:socket_io_client/socket_io_client.dart' as IO;
 import 'package:shared_preferences/shared_preferences.dart';
-// Removed: import 'package:frontend/config/environment.dart';
-
-// Environment configuration - moved to local file
-class Environment {
-  static const String apiBase = 'http://10.239.130.1:5000';
-}
+import 'package:frontend/config/environment.dart';
 
 // Define PriceUtils class
 class PriceUtils {
   static String formatPrice(double price, {String currency = '\$'}) {
-    return '\$${price.toStringAsFixed(2)}';
+    return '$currency\${price.toStringAsFixed(2)}';
   }
   
   // Extract numeric value from price string with any currency symbol
   static double parsePrice(String priceString) {
     if (priceString.isEmpty) return 0.0;
     // Remove all currency symbols and non-numeric characters except decimal point
-    String numericString = priceString.replaceAll(RegExp(r'[^0-9.]'), '');
+    String numericString = priceString.replaceAll(RegExp(r'[^d.]'), '');
     return double.tryParse(numericString) ?? 0.0;
   }
   
@@ -37,18 +32,6 @@ class PriceUtils {
     if (priceString.contains('₦')) return '₦';
     if (priceString.contains('₨')) return '₨';
     return '\$'; // Default to dollar
-  }
-  
-  // Helper method to get currency symbol from code
-  static String currencySymbolFromCode(String code) {
-    switch (code.toUpperCase()) {
-      case 'USD': return '\$';
-      case 'INR': return '₹';
-      case 'EUR': return '€';
-      case 'GBP': return '£';
-      case 'JPY': return '¥';
-      default: return '\$';
-    }
   }
   
   static double calculateDiscountPrice(double originalPrice, double discountPercentage) {
@@ -76,7 +59,6 @@ class CartItem {
   final double discountPrice;
   int quantity;
   final String? image;
-  final String currencySymbol;
   
   CartItem({
     required this.id,
@@ -85,7 +67,6 @@ class CartItem {
     this.discountPrice = 0.0,
     this.quantity = 1,
     this.image,
-    this.currencySymbol = '\$',
   });
   
   double get effectivePrice => discountPrice > 0 ? discountPrice : price;
@@ -140,16 +121,12 @@ class CartManager extends ChangeNotifier {
   }
   
   void clearCart() {
-    clear();
+    clear(); // Reuse existing clear method
   }
   
   void clear() {
     _items.clear();
     notifyListeners();
-  }
-  
-  int get totalQuantity {
-    return _items.fold(0, (sum, item) => sum + item.quantity);
   }
   
   double get subtotal {
@@ -167,7 +144,7 @@ class CartManager extends ChangeNotifier {
   }
   
   double get gstAmount {
-    return PriceUtils.calculateTax(subtotal, _gstPercentage);
+    return PriceUtils.calculateTax(subtotal, _gstPercentage); // Dynamic GST percentage
   }
   
   double get finalTotal {
@@ -176,14 +153,6 @@ class CartManager extends ChangeNotifier {
   
   double get finalTotalWithShipping {
     return PriceUtils.applyShipping(totalWithTax, 5.99); // $5.99 shipping
-  }
-  
-  // Display currency symbol - use first item's symbol or default
-  String get displayCurrencySymbol {
-    if (_items.isNotEmpty) {
-      return _items.first.currencySymbol;
-    }
-    return '\$';
   }
 }
 
@@ -202,7 +171,7 @@ class WishlistItem {
     required this.price,
     this.discountPrice = 0.0,
     this.image,
-    this.currencySymbol = '\$',
+    this.currencySymbol = '$',
   });
   
   double get effectivePrice => discountPrice > 0 ? discountPrice : price;
@@ -210,6 +179,10 @@ class WishlistItem {
 
 // Wishlist manager
 class WishlistManager extends ChangeNotifier {
+  void clearWishlist() {
+    clear(); // Reuse existing clear method
+  }
+
   final List<WishlistItem> _items = [];
   
   List<WishlistItem> get items => List.unmodifiable(_items);
@@ -226,8 +199,8 @@ class WishlistManager extends ChangeNotifier {
     notifyListeners();
   }
   
-  void clearWishlist() {
-    clear();
+  void clearCart() {
+    clear(); // Reuse existing clear method
   }
   
   void clear() {
@@ -241,13 +214,13 @@ class WishlistManager extends ChangeNotifier {
 }
 
 // Dynamic Configuration from Form
-final String gstNumber = '';
-final String selectedCategory = '';
+final String gstNumber = '$gstNumber';
+final String selectedCategory = '$selectedCategory';
 final Map<String, dynamic> storeInfo = {
-  'storeName': 'My Store',
-  'address': '123 Main St',
-  'email': 'support@example.com',
-  'phone': '(123) 456-7890',
+  'storeName': '${storeInfo['storeName'] ?? 'My Store'}',
+  'address': '${storeInfo['address'] ?? '123 Main St'}',
+  'email': '${storeInfo['email'] ?? 'support@example.com'}',
+  'phone': '${storeInfo['phone'] ?? '(123) 456-7890'}',
 };
 
 // Dynamic Product Data - Will be loaded from backend
@@ -348,11 +321,154 @@ class DynamicAppSync {
   }
 }
 
+// Function to load dynamic product data from backend
+Future<void> loadDynamicProductData() async {
+  try {
+    setState(() {
+      isLoading = true;
+      errorMessage = null;
+    });
+    
+    // Get dynamic admin ID
+    final adminId = await AdminManager.getCurrentAdminId();
+    print('🔍 Loading dynamic data with admin ID: ${adminId}');
+    
+    final response = await http.get(
+      Uri.parse('${Environment.apiBase}/api/get-form?adminId=${adminId}&appId=${ApiConfig.appId}'),
+      headers: {'Content-Type': 'application/json'},
+    );
+    
+    if (response.statusCode == 200) {
+      final data = json.decode(response.body);
+      if (data['success'] == true && data['pages'] != null) {
+        final pages = data['pages'] as List;
+        final newProducts = <Map<String, dynamic>>[];
+        
+        // Extract products from all widgets
+        for (var page in pages) {
+          if (page['widgets'] != null) {
+            for (var widget in page['widgets']) {
+              if (widget['properties'] != null && widget['properties']['productCards'] != null) {
+                final products = List<Map<String, dynamic>>.from(widget['properties']['productCards']);
+                newProducts.addAll(products);
+              }
+            }
+          }
+        }
+        
+        setState(() {
+          productCards = newProducts;
+          isLoading = false;
+        });
+        
+        print('✅ Loaded ${productCards.length} dynamic products');
+      } else {
+        throw Exception('Invalid response format');
+      }
+    } else {
+      throw Exception('HTTP ${response.statusCode}');
+    }
+  } catch (e) {
+    print('❌ Error loading dynamic data: $e');
+    setState(() {
+      errorMessage = e.toString();
+      isLoading = false;
+    });
+  }
+}
+
+// Real-time updates with WebSocket
+final DynamicAppSync _appSync = DynamicAppSync();
+StreamSubscription? _updateSubscription;
+
+void startRealTimeUpdates() async {
+  final adminId = await AdminManager.getCurrentAdminId();
+  if (adminId != null) {
+    _appSync.connect(adminId: adminId, apiBase: Environment.apiBase);
+    
+    _updateSubscription = _appSync.updates.listen((update) {
+      if (!mounted) return;
+      
+      final type = update['type']?.toString().toLowerCase();
+      print('📱 Received real-time update: $type');
+      
+      switch (type) {
+        case 'home-page':
+        case 'dynamic-update':
+          loadDynamicProductData();
+          break;
+      }
+    });
+  }
+}
+
+@override
+void initState() {
+  super.initState();
+  loadDynamicProductData();
+  startRealTimeUpdates();
+}
+
+@override
+void dispose() {
+  _updateSubscription?.cancel();
+  _appSync.dispose();
+  super.dispose();
+}
+
+
+void main() => runApp(const MyApp());
+
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+
+  @override
+  Widget build(BuildContext context) => MaterialApp(
+    title: 'Generated E-commerce App',
+    theme: ThemeData(
+      useMaterial3: true,
+      brightness: Brightness.light,
+      colorSchemeSeed: Colors.blue,
+      appBarTheme: const AppBarTheme(
+        elevation: 4,
+        shadowColor: Colors.black38,
+        backgroundColor: Colors.blue,
+        foregroundColor: Colors.white,
+      ),
+      cardTheme: const CardThemeData(
+        elevation: 4,
+        shadowColor: Colors.black12,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.all(Radius.circular(12)),
+        ),
+      ),
+      elevatedButtonTheme: ElevatedButtonThemeData(
+        style: ElevatedButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
+          shape: const RoundedRectangleBorder(
+            borderRadius: BorderRadius.all(Radius.circular(8)),
+          ),
+        ),
+      ),
+      inputDecorationTheme: const InputDecorationTheme(
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.all(Radius.circular(8)),
+        ),
+        filled: true,
+        fillColor: Colors.white,
+        contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 16),
+      ),
+    ),
+    home: const SplashScreen(),
+    debugShowCheckedModeBanner: false,
+  );
+}
+
 // API Configuration - Auto-updated with your server details
 class ApiConfig {
   static String get baseUrl => Environment.apiBase;
-  static const String adminObjectId = '695f649f4178f15ea2cb0831';
-  static const String appId = 'APP_ID_HERE';
+  static const String adminObjectId = '695f649f4178f15ea2cb0831'; // Will be replaced during publish
+  static const String appId = 'APP_ID_HERE'; // Will be replaced during publish
 }
 
 class SessionManager {
@@ -394,6 +510,7 @@ class AdminManager {
   static Future<String> getCurrentAdminId() async {
     if (_currentAdminId != null) return _currentAdminId!;
 
+    // Immutable single source of truth: embedded at publish time
     final adminId = ApiConfig.adminObjectId;
     assert(
       adminId == ApiConfig.adminObjectId,
@@ -409,7 +526,7 @@ class AdminManager {
   static Future<String?> _autoDetectAdminId() async {
     try {
       final response = await http.get(
-        Uri.parse('http://10.239.130.1:5000/api/admin/app-info'),
+        Uri.parse('http://192.168.0.10:5000/api/admin/app-info'),
         headers: {'Content-Type': 'application/json'},
       );
       
@@ -454,11 +571,13 @@ class _SplashScreenState extends State<SplashScreen> {
 
   Future<void> _fetchAppNameAndNavigate() async {
     try {
+      // Get dynamic admin ID
       final adminId = await AdminManager.getCurrentAdminId();
-      print('🔍 Splash screen using admin ID: $adminId');
+      print('🔍 Splash screen using admin ID: ${adminId}');
 
+      // Load admin splash config for this fixed adminId
       final response = await http.get(
-        Uri.parse('${Environment.apiBase}/api/admin/splash?adminId=$adminId&appId=${ApiConfig.appId}'),
+        Uri.parse('${Environment.apiBase}/api/admin/splash?adminId=${adminId}&appId=${ApiConfig.appId}'),
       );
       
       if (response.statusCode == 200) {
@@ -469,7 +588,7 @@ class _SplashScreenState extends State<SplashScreen> {
           setState(() {
             _appName = SessionManager.appName;
           });
-          print('✅ Splash screen loaded app name: $_appName');
+          print('✅ Splash screen loaded app name: ${_appName}');
         }
       } else {
         print('⚠️ Splash screen API error: ${response.statusCode}');
@@ -480,7 +599,8 @@ class _SplashScreenState extends State<SplashScreen> {
         }
       }
     } catch (e) {
-      print('Error fetching app name: $e');
+      print('Error fetching app name: ${e}');
+      // If admin ID not found, show default and let user configure
       if (mounted) {
         setState(() {
           _appName = SessionManager.appName;
@@ -581,7 +701,7 @@ class _SignInPageState extends State<SignInPage> {
     try {
       final adminId = await AdminManager.getCurrentAdminId();
       final response = await http.post(
-        Uri.parse('${Environment.apiBase}/api/login'),
+        Uri.parse('http://192.168.0.10:5000/api/login'),
         headers: {'Content-Type': 'application/json'},
         body: json.encode({
           'email': _emailController.text.trim(),
@@ -621,7 +741,7 @@ class _SignInPageState extends State<SignInPage> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Sign in failed: ${e.toString().replaceAll("Exception: ", "")}'),
+            content: Text('Sign in failed: \${e.toString().replaceAll("Exception: ", "")}'),
             backgroundColor: Colors.red,
           ),
         );
@@ -751,7 +871,7 @@ class _CreateAccountPageState extends State<CreateAccountPage> {
   }
 
   bool _validateEmail(String email) {
-    return RegExp(r'^[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,4}$').hasMatch(email);
+    return RegExp(r'^[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+.[a-zA-Z]{2,4}$').hasMatch(email);
   }
 
   bool _validatePhone(String phone) {
@@ -850,7 +970,7 @@ class _CreateAccountPageState extends State<CreateAccountPage> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(
-            content: Text('Failed: ${e.toString()}'),
+            content: Text('Failed: 2.718281828459045'),
             backgroundColor: Colors.red,
           ),
         );
@@ -888,132 +1008,81 @@ class _CreateAccountPageState extends State<CreateAccountPage> {
               textAlign: TextAlign.center,
             ),
             const SizedBox(height: 32),
-            TextField(
-              controller: _firstNameController,
-              decoration: const InputDecoration(
-                labelText: 'First Name',
-                prefixIcon: Icon(Icons.person),
-              ),
-              textCapitalization: TextCapitalization.words,
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _lastNameController,
-              decoration: const InputDecoration(
-                labelText: 'Last Name',
-                prefixIcon: Icon(Icons.person_outline),
-              ),
-              textCapitalization: TextCapitalization.words,
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _phoneController,
-              decoration: const InputDecoration(
-                labelText: 'Phone Number',
-                prefixIcon: Icon(Icons.phone),
-                hintText: '10 digit number',
-              ),
-              keyboardType: TextInputType.phone,
-              maxLength: 10,
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _emailController,
-              decoration: const InputDecoration(
-                labelText: 'Email ID',
-                prefixIcon: Icon(Icons.email),
-              ),
-              keyboardType: TextInputType.emailAddress,
-            ),
-            const SizedBox(height: 16),
-            TextField(
-              controller: _passwordController,
-              decoration: InputDecoration(
-                labelText: 'Password',
-                prefixIcon: const Icon(Icons.lock),
-                suffixIcon: IconButton(
-                  icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility),
-                  onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+              TextField(
+                controller: _firstNameController,
+                decoration: const InputDecoration(
+                  labelText: 'First Name',
+                  prefixIcon: Icon(Icons.person),
                 ),
+                textCapitalization: TextCapitalization.words,
               ),
-              obscureText: _obscurePassword,
-            ),
-            const SizedBox(height: 24),
-            ElevatedButton(
-              onPressed: _isLoading ? null : _createAccount,
-              style: ElevatedButton.styleFrom(
-                backgroundColor: Colors.blue,
-                foregroundColor: Colors.white,
-                padding: const EdgeInsets.symmetric(vertical: 16),
+              const SizedBox(height: 16),
+              TextField(
+                controller: _lastNameController,
+                decoration: const InputDecoration(
+                  labelText: 'Last Name',
+                  prefixIcon: Icon(Icons.person_outline),
+                ),
+                textCapitalization: TextCapitalization.words,
               ),
-              child: _isLoading
-                  ? const SizedBox(
-                      height: 20,
-                      width: 20,
-                      child: CircularProgressIndicator(
-                        strokeWidth: 2,
-                        color: Colors.white,
-                      ),
-                    )
-                  : const Text('Create Account', style: TextStyle(fontSize: 16)),
-            ),
-          ],
+              const SizedBox(height: 16),
+              TextField(
+                controller: _phoneController,
+                decoration: const InputDecoration(
+                  labelText: 'Phone Number',
+                  prefixIcon: Icon(Icons.phone),
+                  hintText: '10 digit number',
+                ),
+                keyboardType: TextInputType.phone,
+                maxLength: 10,
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: _emailController,
+                decoration: const InputDecoration(
+                  labelText: 'Email ID',
+                  prefixIcon: Icon(Icons.email),
+                ),
+                keyboardType: TextInputType.emailAddress,
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: _passwordController,
+                decoration: InputDecoration(
+                  labelText: 'Password',
+                  prefixIcon: const Icon(Icons.lock),
+                  suffixIcon: IconButton(
+                    icon: Icon(_obscurePassword ? Icons.visibility_off : Icons.visibility),
+                    onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
+                  ),
+                ),
+                obscureText: _obscurePassword,
+              ),
+              const SizedBox(height: 24),
+              ElevatedButton(
+                onPressed: _isLoading ? null : _createAccount,
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.blue,
+                  foregroundColor: Colors.white,
+                  padding: const EdgeInsets.symmetric(vertical: 16),
+                ),
+                child: _isLoading
+                    ? const SizedBox(
+                        height: 20,
+                        width: 20,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : const Text('Create Account', style: TextStyle(fontSize: 16)),
+              ),
+            ],
+          ),
         ),
       ),
     );
   }
-}
-
-// Helper classes to fix errors
-class AuthHelper {
-  static Future<bool> isAdmin() async {
-    return false;
-  }
-}
-
-class ApiService {
-  Future<Map<String, dynamic>> getUserProfile() async {
-    return {};
-  }
-}
-
-// Carousel slider placeholder classes
-class CarouselSlider extends StatelessWidget {
-  final List<Widget> items;
-  final dynamic options;
-  
-  const CarouselSlider({super.key, required this.items, required this.options});
-  
-  @override
-  Widget build(BuildContext context) {
-    return Container();
-  }
-}
-
-class CarouselOptions {
-  final double height;
-  final bool autoPlay;
-  final Duration autoPlayInterval;
-  final Duration autoPlayAnimationDuration;
-  final Curve autoPlayCurve;
-  final bool enlargeCenterPage;
-  final Axis scrollDirection;
-  final bool enableInfiniteScroll;
-  final double viewportFraction;
-  final double enlargeFactor;
-  
-  const CarouselOptions({
-    required this.height,
-    this.autoPlay = true,
-    this.autoPlayInterval = const Duration(seconds: 3),
-    this.autoPlayAnimationDuration = const Duration(milliseconds: 800),
-    this.autoPlayCurve = Curves.fastOutSlowIn,
-    this.enlargeCenterPage = true,
-    this.scrollDirection = Axis.horizontal,
-    this.enableInfiniteScroll = true,
-    this.viewportFraction = 0.8,
-    this.enlargeFactor = 0.3,
-  });
 }
 
 class HomePage extends StatefulWidget {
@@ -1038,33 +1107,24 @@ class _HomePageState extends State<HomePage> {
   Map<String, dynamic> _dynamicStoreInfo = {};
   Map<String, dynamic> _dynamicDesignSettings = {};
   Color _pageBackgroundColor = Colors.white;
-  
-  // Dynamic data variables
-  List<Map<String, dynamic>> productCards = [];
-  String? errorMessage;
-  Map<String, int> _productQuantities = {};
-  final DynamicAppSync _appSync = DynamicAppSync();
-  StreamSubscription? _updateSubscription;
 
   @override
   void initState() {
     super.initState();
     _pageController = PageController(initialPage: 0);
-    _dynamicProductCards = List.from(productCards);
+    _dynamicProductCards = List.from(productCards); // Fallback to static data
     _filteredProducts = List.from(_dynamicProductCards);
     _loadDynamicData();
-    startRealTimeUpdates();
   }
 
   @override
   void dispose() {
     _pageController.dispose();
-    _updateSubscription?.cancel();
-    _appSync.dispose();
     super.dispose();
   }
 
   // Real-time updates removed - app updates dynamically via WebSocket
+
   Future<void> _loadDynamicData() async {
     setState(() => _isLoading = true);
     await _loadDynamicAppConfig();
@@ -1076,11 +1136,12 @@ class _HomePageState extends State<HomePage> {
   // Load dynamic data from backend
   Future<void> _loadDynamicAppConfig() async {
     try {
+      // Get dynamic admin ID
       final adminId = await AdminManager.getCurrentAdminId();
-      print('🔍 Home page using admin ID: $adminId');
+      print('🔍 Home page using admin ID: ${adminId}');
       
       final response = await http.get(
-        Uri.parse('${Environment.apiBase}/api/get-form?adminId=$adminId&appId=${ApiConfig.appId}'),
+        Uri.parse('${Environment.apiBase}/api/get-form?adminId=${adminId}&appId=${ApiConfig.appId}'),
         headers: {'Content-Type': 'application/json'},
       );
 
@@ -1089,6 +1150,7 @@ class _HomePageState extends State<HomePage> {
         if (data['success'] == true) {
           final pages = (data['pages'] is List) ? List.from(data['pages']) : <dynamic>[];
 
+          // Page-level properties (overall background, etc.)
           Map<String, dynamic> pageProps = <String, dynamic>{};
           if (pages.isNotEmpty && pages.first is Map) {
             final propsRaw = (pages.first as Map)['properties'];
@@ -1097,11 +1159,13 @@ class _HomePageState extends State<HomePage> {
             }
           }
 
+          // Extract widgets from first page (Home)
           List<Map<String, dynamic>> extractedWidgets = [];
           if (pages.isNotEmpty && pages.first is Map && (pages.first as Map)['widgets'] is List) {
             extractedWidgets = List<Map<String, dynamic>>.from((pages.first as Map)['widgets']);
           }
 
+          // Extract products from widget properties (if present)
           List<Map<String, dynamic>> extractedProducts = [];
           for (final w in extractedWidgets) {
             final name = (w['name'] ?? '').toString();
@@ -1113,6 +1177,7 @@ class _HomePageState extends State<HomePage> {
             }
           }
           
+          // Sort widgets to ensure HeaderWidget appears first
           extractedWidgets.sort((a, b) {
             bool aIsHeader = a['name'] == 'HeaderWidget';
             bool bIsHeader = b['name'] == 'HeaderWidget';
@@ -1128,7 +1193,7 @@ class _HomePageState extends State<HomePage> {
 
           setState(() {
             _dynamicProductCards = extractedProducts.isNotEmpty ? extractedProducts : productCards;
-            _filterProducts(_searchQuery);
+            _filterProducts(_searchQuery); // Re-apply current filter
             _homeWidgets = extractedWidgets;
             _dynamicStoreInfo = storeInfo;
             _dynamicDesignSettings = designSettings;
@@ -1150,6 +1215,8 @@ class _HomePageState extends State<HomePage> {
     setState(() {
       _currentPageIndex = index;
 
+      // Clear ONLY notification badges when opening Cart/Wishlist.
+      // Do NOT clear the actual cart/wishlist items.
       if (index == 1) {
         _cartNotificationCount = 0;
       } else if (index == 2) {
@@ -1176,6 +1243,21 @@ class _HomePageState extends State<HomePage> {
     });
   }
 
+  IconData _getIconData(String iconName) {
+    switch (iconName) {
+      case 'home':
+        return Icons.home;
+      case 'shopping_cart':
+        return Icons.shopping_cart;
+      case 'favorite':
+        return Icons.favorite;
+      case 'person':
+        return Icons.person;
+      default:
+        return Icons.error;
+    }
+  }
+
   String _currencySymbolForProduct(Map<String, dynamic> product) {
     final String symbol = (product['currencySymbol'] ?? '').toString();
     if (symbol.isNotEmpty) return symbol;
@@ -1184,139 +1266,55 @@ class _HomePageState extends State<HomePage> {
     return PriceUtils.detectCurrency((product['price'] ?? '').toString());
   }
 
-  // Function to load dynamic product data from backend
-  Future<void> loadDynamicProductData() async {
-    try {
-      setState(() {
-        _isLoading = true;
-        errorMessage = null;
-      });
-      
-      final adminId = await AdminManager.getCurrentAdminId();
-      print('🔍 Loading dynamic data with admin ID: $adminId');
-      
-      final response = await http.get(
-        Uri.parse('${Environment.apiBase}/api/get-form?adminId=$adminId&appId=${ApiConfig.appId}'),
-        headers: {'Content-Type': 'application/json'},
+  @override
+  Widget build(BuildContext context) => Scaffold(
+    body: IndexedStack(
+      index: _currentPageIndex,
+      children: [
+        _buildHomePage(),
+        _buildCartPage(),
+        _buildWishlistPage(),
+        _buildProfilePage(),
+      ],
+    ),
+    bottomNavigationBar: _buildBottomNavigationBar(),
+  );
+
+  Widget _buildHomePage() {
+    if (_isLoading) {
+      return const Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            CircularProgressIndicator(),
+            SizedBox(height: 16),
+            Text('Loading...'),
+          ],
+        ),
       );
-      
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        if (data['success'] == true && data['pages'] != null) {
-          final pages = data['pages'] as List;
-          final newProducts = <Map<String, dynamic>>[];
-          
-          for (var page in pages) {
-            if (page['widgets'] != null) {
-              for (var widget in page['widgets']) {
-                if (widget['properties'] != null && widget['properties']['productCards'] != null) {
-                  final products = List<Map<String, dynamic>>.from(widget['properties']['productCards']);
-                  newProducts.addAll(products);
-                }
-              }
-            }
-          }
-          
-          setState(() {
-            productCards = newProducts;
-            _dynamicProductCards = newProducts;
-            _isLoading = false;
-          });
-          
-          print('✅ Loaded ${productCards.length} dynamic products');
-        } else {
-          throw Exception('Invalid response format');
-        }
-      } else {
-        throw Exception('HTTP ${response.statusCode}');
-      }
-    } catch (e) {
-      print('❌ Error loading dynamic data: $e');
-      setState(() {
-        errorMessage = e.toString();
-        _isLoading = false;
-      });
     }
-  }
 
-  // Real-time updates with WebSocket
-  void startRealTimeUpdates() async {
-    final adminId = await AdminManager.getCurrentAdminId();
-    if (adminId != null) {
-      _appSync.connect(adminId: adminId, apiBase: Environment.apiBase);
-      
-      _updateSubscription = _appSync.updates.listen((update) {
-        if (!mounted) return;
-        
-        final type = update['type']?.toString().toLowerCase();
-        print('📱 Received real-time update: $type');
-        
-        switch (type) {
-          case 'home-page':
-          case 'dynamic-update':
-            loadDynamicProductData();
-            break;
-        }
-      });
-    }
-  }
-
-  // Helper methods
-  int _getProductQuantity(String productId) {
-    return _productQuantities[productId] ?? 1;
-  }
-
-  void _incrementQuantity(String productId) {
-    final currentQuantity = _getProductQuantity(productId);
-    if (currentQuantity < 10) {
-      setState(() {
-        _productQuantities[productId] = currentQuantity + 1;
-      });
-    }
-  }
-
-  void _decrementQuantity(String productId) {
-    final currentQuantity = _getProductQuantity(productId);
-    if (currentQuantity > 1) {
-      setState(() {
-        _productQuantities[productId] = currentQuantity - 1;
-      });
-    }
-  }
-
-  int _getTotalCartQuantity() {
-    return _productQuantities.values.fold(0, (sum, quantity) => sum + quantity);
-  }
-
-  bool _canAddToCart() {
-    return _getTotalCartQuantity() < 10;
-  }
-
-  Color _colorFromHex(String? hexColor) {
-    if (hexColor == null || hexColor.isEmpty) return Colors.blue;
-    
-    String localFormattedColor = hexColor.toUpperCase().replaceAll('#', '');
-    
-    if (localFormattedColor.length == 6) {
-      localFormattedColor = 'FF' + localFormattedColor;
-    } else if (localFormattedColor.length == 8) {
-      // Already has alpha channel
-    } else {
-      return Colors.blue;
-    }
-    
-    try {
-      return Color(int.parse('0x$localFormattedColor'));
-    } catch (e) {
-      print('Invalid color: $hexColor');
-      return Colors.blue;
-    }
-  }
-
-  void _handleBuyNow() {
-    // Handle buy now action
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Proceeding to checkout...')),
+    return RefreshIndicator(
+      onRefresh: _loadDynamicData,
+      child: Container(
+        color: _pageBackgroundColor,
+        child: SingleChildScrollView(
+          physics: const AlwaysScrollableScrollPhysics(),
+          child: Column(
+            children: (
+              _homeWidgets.isNotEmpty
+                  ? _homeWidgets.map((w) => _buildHomeWidgetFromConfig(w)).toList()
+                  : <Widget>[
+                      _buildHomeWidgetFromConfig({'name': 'HeaderWidget', 'properties': {}}),
+                      _buildHomeWidgetFromConfig({'name': 'HeroBannerWidget', 'properties': {}}),
+                      _buildHomeWidgetFromConfig({'name': 'ProductSearchBarWidget', 'properties': {}}),
+                      _buildHomeWidgetFromConfig({'name': 'Catalog View Card', 'properties': {}}),
+                      _buildHomeWidgetFromConfig({'name': 'StoreInfoWidget', 'properties': {}}),
+                    ]
+            ),
+          ),
+        ),
+      ),
     );
   }
 
@@ -1328,6 +1326,7 @@ class _HomePageState extends State<HomePage> {
 
     switch (name) {
       case 'HeaderWidget':
+        // Dynamic Header Widget - prefers widget properties, falls back to API data
         final appName = (props['appName'] ?? _dynamicStoreInfo['storeName'] ?? 'My Store').toString();
         final logoAsset = (props['logoAsset'] ?? '').toString();
         final bg = (props['backgroundColor'] ?? _dynamicDesignSettings['headerColor'] ?? '#4fb322').toString();
@@ -1405,6 +1404,7 @@ class _HomePageState extends State<HomePage> {
         );
 
       case 'HeroBannerWidget':
+        // Dynamic HeroBanner Widget - matches preview exactly
         final imageAsset = props['imageAsset'];
         final title = props['title'] ?? 'Welcome to Our Store!';
         final subtitle = props['subtitle'] ?? 'Shop the latest products';
@@ -1540,6 +1540,7 @@ class _HomePageState extends State<HomePage> {
         );
 
       case 'ProductSearchBarWidget':
+        // Dynamic ProductSearchBar Widget - matches preview exactly
         final placeholder = props['placeholder'] ?? 'Search products';
         final height = double.tryParse(props['height']?.toString() ?? '50') ?? 50.0;
         final width = double.tryParse(props['width']?.toString() ?? '300') ?? 300.0;
@@ -1602,6 +1603,7 @@ class _HomePageState extends State<HomePage> {
         return _buildDynamicProductGrid(styleProps: props);
 
       case 'StoreInfoWidget':
+        // Dynamic StoreInfo Widget - prefers widget properties, falls back to API data
         final storeName = ((props['storeName'] ?? _dynamicStoreInfo['storeName'])?.toString().trim() ?? '');
         final address = ((props['address'] ?? _dynamicStoreInfo['address'])?.toString().trim() ?? '');
         final email = ((props['email'] ?? _dynamicStoreInfo['email'])?.toString().trim() ?? '');
@@ -1730,6 +1732,7 @@ class _HomePageState extends State<HomePage> {
         );
 
       case 'ImageSliderWidget':
+        // Dynamic ImageSlider Widget - fetch from API like web preview
         final height = double.tryParse(props['height']?.toString() ?? '150') ?? 150.0;
         final width = double.tryParse(props['width']?.toString() ?? '300') ?? 300.0;
         final borderRadius = double.tryParse(props['borderRadius']?.toString() ?? '12') ?? 12.0;
@@ -1738,8 +1741,10 @@ class _HomePageState extends State<HomePage> {
         final showIndicators = props['showIndicators'] ?? true;
         final enableInfiniteScroll = true;
         
+        // Use dynamic slider images from API like web preview
         List<Map<String, dynamic>> sliderImages = [];
         
+        // Find ImageSliderWidget in dynamic home widgets and extract sliderImages
         if (_homeWidgets.isNotEmpty) {
           for (var widget in _homeWidgets) {
             if (widget is Map && widget['name'] == 'ImageSliderWidget') {
@@ -1752,6 +1757,7 @@ class _HomePageState extends State<HomePage> {
           }
         }
         
+        // Fallback to static props if no dynamic images found
         if (sliderImages.isEmpty && props['sliderImages'] != null) {
           sliderImages = List<Map<String, dynamic>>.from(props['sliderImages']);
         }
@@ -1767,9 +1773,21 @@ class _HomePageState extends State<HomePage> {
                     Container(
                       constraints: BoxConstraints(
                         maxWidth: width,
-                        maxHeight: height + 20,
+                        maxHeight: height + 20, // Add padding to prevent overflow
                       ),
                       child: CarouselSlider(
+                        options: CarouselOptions(
+                          height: height,
+                          autoPlay: autoPlay,
+                          autoPlayInterval: Duration(seconds: autoPlayInterval),
+                          autoPlayAnimationDuration: const Duration(milliseconds: 800),
+                          autoPlayCurve: Curves.fastOutSlowIn,
+                          enlargeCenterPage: true,
+                          scrollDirection: Axis.horizontal,
+                          enableInfiniteScroll: enableInfiniteScroll,
+                          viewportFraction: 0.8,
+                          enlargeFactor: 0.3,
+                        ),
                         items: sliderImages.map((imageData) {
                           return Builder(
                             builder: (BuildContext context) {
@@ -1810,18 +1828,6 @@ class _HomePageState extends State<HomePage> {
                             },
                           );
                         }).toList(),
-                        options: CarouselOptions(
-                          height: height,
-                          autoPlay: autoPlay,
-                          autoPlayInterval: Duration(seconds: autoPlayInterval),
-                          autoPlayAnimationDuration: const Duration(milliseconds: 800),
-                          autoPlayCurve: Curves.fastOutSlowIn,
-                          enlargeCenterPage: true,
-                          scrollDirection: Axis.horizontal,
-                          enableInfiniteScroll: enableInfiniteScroll,
-                          viewportFraction: 0.8,
-                          enlargeFactor: 0.3,
-                        ),
                       ),
                     ),
                     if (showIndicators)
@@ -1861,11 +1867,170 @@ class _HomePageState extends State<HomePage> {
           ),
         );
 
+      case 'ProductDescriptionWidget':
+        // Dynamic ProductDescription Widget - matches preview exactly
+        final title = props['descriptionTitle'] ?? 'Description';
+        final content = props['descriptionContent'] ?? '';
+        final productImage = props['productImage'];
+
+        final titleFontSize = double.tryParse(props['titleFontSize']?.toString() ?? '18') ?? 18.0;
+        final contentFontSize = double.tryParse(props['contentFontSize']?.toString() ?? '14') ?? 14.0;
+        final titleColor = props['titleColor'] != null
+            ? _colorFromHex(props['titleColor'])
+            : Colors.black;
+        final contentColor = props['contentColor'] != null
+            ? _colorFromHex(props['contentColor'])
+            : Colors.grey.shade700;
+        final backgroundColor = props['backgroundColor'] != null
+            ? _colorFromHex(props['backgroundColor'])
+            : Colors.white;
+
+        return Container(
+          width: double.infinity,
+          margin: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+          child: Card(
+            elevation: 2,
+            color: backgroundColor,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: TextStyle(
+                      fontSize: titleFontSize,
+                      fontWeight: FontWeight.bold,
+                      color: titleColor,
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  if (productImage != null && productImage.toString().isNotEmpty)
+                    ClipRRect(
+                      borderRadius: BorderRadius.circular(12),
+                      child: productImage.toString().startsWith('data:image/')
+                          ? Image.memory(
+                              base64Decode(productImage.toString().split(',')[1]),
+                              width: double.infinity,
+                              height: 160,
+                              fit: BoxFit.cover,
+                            )
+                          : Image.network(
+                              productImage,
+                              width: double.infinity,
+                              height: 160,
+                              fit: BoxFit.cover,
+                            ),
+                    ),
+                  if (productImage != null && productImage.toString().isNotEmpty) const SizedBox(height: 12),
+                  if (content.isNotEmpty)
+                    Text(
+                      content,
+                      style: TextStyle(
+                        fontSize: contentFontSize,
+                        color: contentColor,
+                        height: 1.5,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        );
+
+      case 'SmallCardWidget':
+        final title = (props['title'] ?? 'Small Card').toString();
+        final subtitle = (props['subtitle'] ?? 'Card subtitle').toString();
+        return Container(
+          margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 16),
+          child: Card(
+            elevation: 2,
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+            child: Padding(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: Colors.blue.shade100,
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(Icons.card_giftcard, color: Colors.blue),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          title,
+                          style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14),
+                        ),
+                        Text(
+                          subtitle,
+                          style: TextStyle(color: Colors.grey[600], fontSize: 12),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+
       default:
         return const SizedBox.shrink();
     }
   }
 
+  // Load dynamic store data from backend
+  Future<Map<String, dynamic>> _loadDynamicStoreData() async {
+    try {
+      final adminId = await AdminManager.getCurrentAdminId();
+      final response = await http.get(
+        Uri.parse('${Environment.apiBase}/api/get-form?adminId=${adminId}&appId=${ApiConfig.appId}'),
+        headers: {'Content-Type': 'application/json'},
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['success'] == true) {
+          // Extract store info from the response
+          final storeInfo = data['storeInfo'] ?? {};
+          final designSettings = data['designSettings'] ?? {};
+          
+          return {
+            'storeName': data['shopName'] ?? storeInfo['storeName'] ?? 'My Store',
+            'address': storeInfo['address'] ?? '123 Main St',
+            'email': storeInfo['email'] ?? 'support@example.com',
+            'phone': storeInfo['phone'] ?? '(123) 456-7890',
+            'headerColor': designSettings['headerColor'] ?? '#4fb322',
+            'bannerText': designSettings['bannerText'] ?? 'Welcome to our store!',
+            'bannerButtonText': designSettings['bannerButtonText'] ?? 'Shop Now',
+          };
+        }
+      }
+    } catch (e) {
+      print('Error loading store data: 2.718281828459045');
+    }
+    
+    // Return default values if API fails
+    return {
+      'storeName': 'My Store',
+      'address': '123 Main St',
+      'email': 'support@example.com',
+      'phone': '(123) 456-7890',
+      'headerColor': '#4fb322',
+      'bannerText': 'Welcome to our store!',
+      'bannerButtonText': 'Shop Now',
+    };
+  }
+
+  // Build dynamic product grid
   Widget _buildDynamicProductGrid({Map<String, dynamic>? styleProps}) {
     final products = _searchQuery.isEmpty ? _dynamicProductCards : _filteredProducts;
 
@@ -1909,8 +2074,74 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
+  // Load dynamic products from backend
+  Future<List<Map<String, dynamic>>> _loadDynamicProducts() async {
+    try {
+      final adminId = await AdminManager.getCurrentAdminId();
+      final response = await http.get(
+        Uri.parse('${Environment.apiBase}/api/get-form?adminId=${adminId}&appId=${ApiConfig.appId}'),
+        headers: {'Content-Type': 'application/json'},
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        if (data['success'] == true && data['widgets'] != null) {
+          // Extract product data from widgets
+          List<Map<String, dynamic>> products = [];
+          
+          for (var widget in data['widgets']) {
+            if (widget['name'] == 'ProductGridWidget' || 
+                widget['name'] == 'Catalog View Card' ||
+                widget['name'] == 'Product Detail Card') {
+              final productCards = widget['properties']?['productCards'] ?? [];
+              products.addAll(List<Map<String, dynamic>>.from(productCards));
+            }
+          }
+          
+          return products;
+        }
+      }
+    } catch (e) {
+      print('Error loading products: 2.718281828459045');
+    }
+    
+    return [];
+  }
+
+  // Quantity management methods
+  int _getProductQuantity(String productId) {
+    return _productQuantities[productId] ?? 1;
+  }
+
+  void _incrementQuantity(String productId) {
+    final currentQuantity = _getProductQuantity(productId);
+    if (currentQuantity < 10) {
+      setState(() {
+        _productQuantities[productId] = currentQuantity + 1;
+      });
+    }
+  }
+
+  void _decrementQuantity(String productId) {
+    final currentQuantity = _getProductQuantity(productId);
+    if (currentQuantity > 1) {
+      setState(() {
+        _productQuantities[productId] = currentQuantity - 1;
+      });
+    }
+  }
+
+  int _getTotalCartQuantity() {
+    return _productQuantities.values.fold(0, (sum, quantity) => sum + quantity);
+  }
+
+  bool _canAddToCart() {
+    return _getTotalCartQuantity() < 10;
+  }
+
+  // Build individual product card
   Widget _buildProductCard(Map<String, dynamic> product, int index, {Map<String, dynamic>? styleProps}) {
-    final String productId = 'product_${index.toString()}';
+    final String productId = 'product_' + index.toString();
     final String productName = product['productName'] ?? product['name'] ?? 'Product';
 
     final Map<String, dynamic> props = styleProps ?? const <String, dynamic>{};
@@ -1919,6 +2150,7 @@ class _HomePageState extends State<HomePage> {
     final Color priceColor = _colorFromHex(props['priceColor']?.toString()) ?? Colors.blue;
     final Color discountBadgeColor = _colorFromHex(props['discountBadgeColor']?.toString()) ?? Colors.redAccent;
     
+    // Try multiple possible price field names
     final String? priceField1 = product['price']?.toString();
     final String? priceField2 = product['basePrice']?.toString();
     final String? priceField3 = product['currentPrice']?.toString();
@@ -1941,7 +2173,7 @@ class _HomePageState extends State<HomePage> {
     final bool isSoldOut = quantityAvailable <= 0;
     final String discountLabel;
     if (hasPercentDiscount) {
-      discountLabel = '${badgeDiscountPercent.toStringAsFixed(0)}% OFF';
+      discountLabel = '0% OFF';
     } else {
       discountLabel = 'OFFER';
     }
@@ -1950,7 +2182,7 @@ class _HomePageState extends State<HomePage> {
     if (isSoldOut) {
       stockLabel = 'SOLD OUT';
     } else {
-      stockLabel = 'In stock: $quantityAvailable';
+      stockLabel = 'In stock: 0';
     }
     final bool isInWishlist = _wishlistManager.isInWishlist(productId);
 
@@ -1968,6 +2200,7 @@ class _HomePageState extends State<HomePage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // Image + badges section
             Expanded(
               flex: 2,
               child: Stack(
@@ -2051,6 +2284,7 @@ class _HomePageState extends State<HomePage> {
                 ],
               ),
             ),
+            // Content section
             Expanded(
               flex: 3,
               child: Padding(
@@ -2059,6 +2293,7 @@ class _HomePageState extends State<HomePage> {
                   crossAxisAlignment: CrossAxisAlignment.start,
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
+                    // Product name
                     Text(
                       productName,
                       style: const TextStyle(
@@ -2069,13 +2304,14 @@ class _HomePageState extends State<HomePage> {
                       overflow: TextOverflow.ellipsis,
                     ),
                     const SizedBox(height: 4),
+                    // Price + stock
                     Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Row(
                           children: [
                             Text(
-                              '$currencySymbol${effectivePrice.toStringAsFixed(2)}',
+                              currencySymbol + effectivePrice.toStringAsFixed(2),
                               style: TextStyle(
                                 fontSize: 14,
                                 fontWeight: FontWeight.bold,
@@ -2085,7 +2321,7 @@ class _HomePageState extends State<HomePage> {
                             const SizedBox(width: 4),
                             if (hasDiscount)
                               Text(
-                                '$currencySymbol${basePrice.toStringAsFixed(2)}',
+                                currencySymbol + basePrice.toStringAsFixed(2),
                                 style: TextStyle(
                                   fontSize: 11,
                                   decoration: TextDecoration.lineThrough,
@@ -2095,6 +2331,7 @@ class _HomePageState extends State<HomePage> {
                           ],
                         ),
                         const SizedBox(height: 2),
+                        // Only show stock label for items that are in stock and only for admin users
                         if (!isSoldOut)
                           FutureBuilder<bool>(
                             future: AuthHelper.isAdmin(),
@@ -2109,7 +2346,7 @@ class _HomePageState extends State<HomePage> {
                                   ),
                                 );
                               }
-                              return const SizedBox.shrink();
+                              return SizedBox.shrink();
                             },
                           ),
                       ],
@@ -2125,42 +2362,43 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  Widget _buildHomePage() {
-    if (_isLoading) {
-      return const Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            CircularProgressIndicator(),
-            SizedBox(height: 16),
-            Text('Loading...'),
-          ],
-        ),
-      );
-    }
-
-    return RefreshIndicator(
-      onRefresh: _loadDynamicData,
-      child: Container(
-        color: _pageBackgroundColor,
-        child: SingleChildScrollView(
-          physics: const AlwaysScrollableScrollPhysics(),
-          child: Column(
-            children: (
-              _homeWidgets.isNotEmpty
-                  ? _homeWidgets.map((w) => _buildHomeWidgetFromConfig(w)).toList()
-                  : <Widget>[
-                      _buildHomeWidgetFromConfig({'name': 'HeaderWidget', 'properties': {}}),
-                      _buildHomeWidgetFromConfig({'name': 'HeroBannerWidget', 'properties': {}}),
-                      _buildHomeWidgetFromConfig({'name': 'ProductSearchBarWidget', 'properties': {}}),
-                      _buildHomeWidgetFromConfig({'name': 'Catalog View Card', 'properties': {}}),
-                      _buildHomeWidgetFromConfig({'name': 'StoreInfoWidget', 'properties': {}}),
-                    ]
-            ),
-          ),
-        ),
-      ),
+  // Helper methods for social sharing
+  void _shareToPlatform(String platform, String link, String text) {
+    // Simple implementation - in real app would use url_launcher or share_plus
+    print('Share to ' + platform + ': ' + link + ' with text: ' + text);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Sharing to ' + platform + '...')),
     );
+  }
+
+  void _copyShareLink(String link) {
+    // Simple implementation - in real app would use clipboard
+    print('Copy link: ' + link);
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Link copied to clipboard!')),
+    );
+  }
+
+  // Helper method to convert hex color to Color
+  Color _colorFromHex(String? hexColor) {
+    if (hexColor == null || hexColor.isEmpty) return Colors.blue;
+    
+    String localFormattedColor = hexColor.toUpperCase().replaceAll('#', '');
+    
+    if (localFormattedColor.length == 6) {
+      localFormattedColor = 'FF' + localFormattedColor;
+    } else if (localFormattedColor.length == 8) {
+      // Already has alpha channel
+    } else {
+      return Colors.blue;
+    }
+    
+    try {
+      return Color(int.parse('0x' + localFormattedColor));
+    } catch (e) {
+      print('Invalid color: ' + hexColor);
+      return Colors.blue;
+    }
   }
 
   Widget _buildCartPage() {
@@ -2224,6 +2462,7 @@ class _HomePageState extends State<HomePage> {
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text(item.name, style: const TextStyle(fontWeight: FontWeight.bold)),
+                                    // Show current price (effective price)
                                     Text(
                                       PriceUtils.formatPrice(item.effectivePrice),
                                       style: const TextStyle(
@@ -2232,6 +2471,7 @@ class _HomePageState extends State<HomePage> {
                                         color: Colors.blue,
                                       ),
                                     ),
+                                    // Show original price if there's a discount
                                     if (item.discountPrice > 0 && item.price != item.discountPrice)
                                       Text(
                                         PriceUtils.formatPrice(item.price),
@@ -2244,13 +2484,16 @@ class _HomePageState extends State<HomePage> {
                                   ],
                                 ),
                               ),
+                              // Quantity controls for all users
                               Row(
                                 children: [
+                                  // Decrease button
                                   GestureDetector(
                                     onTap: () {
                                       if (item.quantity > 1) {
                                         _cartManager.updateQuantity(item.id, item.quantity - 1);
                                       } else {
+                                        // Remove item if quantity is 1 and user clicks -
                                         _cartManager.removeItem(item.id);
                                         ScaffoldMessenger.of(context).showSnackBar(
                                           const SnackBar(content: Text('Item removed from cart')),
@@ -2272,6 +2515,7 @@ class _HomePageState extends State<HomePage> {
                                     ),
                                   ),
                                   const SizedBox(width: 8),
+                                  // Quantity display
                                   Container(
                                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                                     decoration: BoxDecoration(
@@ -2284,8 +2528,10 @@ class _HomePageState extends State<HomePage> {
                                     ),
                                   ),
                                   const SizedBox(width: 8),
+                                  // Increase button
                                   GestureDetector(
                                     onTap: () {
+                                      // Check if adding this item would exceed the 10 product limit
                                       if (_cartManager.totalQuantity < 10) {
                                         _cartManager.updateQuantity(item.id, item.quantity + 1);
                                       } else {
@@ -2320,6 +2566,7 @@ class _HomePageState extends State<HomePage> {
                     },
                   ),
                 ),
+                // Bill Summary Section
                 Container(
                   margin: const EdgeInsets.all(16),
                   padding: const EdgeInsets.all(16),
@@ -2357,7 +2604,7 @@ class _HomePageState extends State<HomePage> {
                             mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
                               const Text('Discount', style: TextStyle(fontSize: 14, color: Colors.grey)),
-                              Text('-${PriceUtils.formatPrice(_cartManager.totalDiscount, currency: _cartManager.displayCurrencySymbol)}', style: const TextStyle(fontSize: 14, color: Colors.green)),
+                              Text('-' + PriceUtils.formatPrice(_cartManager.totalDiscount, currency: _cartManager.displayCurrencySymbol), style: const TextStyle(fontSize: 14, color: Colors.green)),
                             ],
                           ),
                         ),
@@ -2385,11 +2632,15 @@ class _HomePageState extends State<HomePage> {
                     ],
                   ),
                 ),
+                // Buy Now Button
                 Container(
                   margin: const EdgeInsets.all(16),
                   width: double.infinity,
                   child: ElevatedButton(
-                    onPressed: _handleBuyNow,
+                    onPressed: () {
+                      // Handle buy now action
+                      _handleBuyNow();
+                    },
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.green,
                       foregroundColor: Colors.white,
@@ -2510,8 +2761,7 @@ class _HomePageState extends State<HomePage> {
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16.0),
         child: Column(
-          children: [            
-            Center(
+          children: [            Center(
               child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
@@ -2564,6 +2814,7 @@ class _HomePageState extends State<HomePage> {
                       ),
                     ),
                     onPressed: () {
+                      // Log out and navigate to sign in page
                       Navigator.pushAndRemoveUntil(
                         context,
                         MaterialPageRoute(
@@ -2579,22 +2830,10 @@ class _HomePageState extends State<HomePage> {
                   ),
                 ],
               ),
-            ),          
-          ],
+            ),          ],
         ),
       ),
     );
-  }
-
-  Future<Map<String, dynamic>> _fetchUserProfile() async {
-    try {
-      final apiService = ApiService();
-      final userProfile = await apiService.getUserProfile();
-      return userProfile;
-    } catch (e) {
-      print('Error fetching user profile: $e');
-      return {};
-    }
   }
 
   Widget _buildBottomNavigationBar() {
@@ -2633,64 +2872,16 @@ class _HomePageState extends State<HomePage> {
     );
   }
 
-  @override
-  Widget build(BuildContext context) => Scaffold(
-    body: IndexedStack(
-      index: _currentPageIndex,
-      children: [
-        _buildHomePage(),
-        _buildCartPage(),
-        _buildWishlistPage(),
-        _buildProfilePage(),
-      ],
-    ),
-    bottomNavigationBar: _buildBottomNavigationBar(),
-  );
-}
+  // Method to fetch user profile data
+  Future<Map<String, dynamic>> _fetchUserProfile() async {
+    try {
+      final ApiService apiService = ApiService();
+      final userProfile = await apiService.getUserProfile();
+      return userProfile;
+    } catch (e) {
+      print('Error fetching user profile: 2.718281828459045');
+      return {};
+    }
+  }
 
-void main() => runApp(const MyApp());
-
-class MyApp extends StatelessWidget {
-  const MyApp({super.key});
-
-  @override
-  Widget build(BuildContext context) => MaterialApp(
-    title: 'Generated E-commerce App',
-    theme: ThemeData(
-      useMaterial3: true,
-      brightness: Brightness.light,
-      colorSchemeSeed: Colors.blue,
-      appBarTheme: const AppBarTheme(
-        elevation: 4,
-        shadowColor: Colors.black38,
-        backgroundColor: Colors.blue,
-        foregroundColor: Colors.white,
-      ),
-      cardTheme: const CardTheme(
-        elevation: 4,
-        shadowColor: Colors.black12,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.all(Radius.circular(12)),
-        ),
-      ),
-      elevatedButtonTheme: ElevatedButtonThemeData(
-        style: ElevatedButton.styleFrom(
-          padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-          shape: const RoundedRectangleBorder(
-            borderRadius: BorderRadius.all(Radius.circular(8)),
-          ),
-        ),
-      ),
-      inputDecorationTheme: const InputDecorationTheme(
-        border: OutlineInputBorder(
-          borderRadius: BorderRadius.all(Radius.circular(8)),
-        ),
-        filled: true,
-        fillColor: Colors.white,
-        contentPadding: EdgeInsets.symmetric(horizontal: 16, vertical: 16),
-      ),
-    ),
-    home: const SplashScreen(),
-    debugShowCheckedModeBanner: false,
-  );
 }
